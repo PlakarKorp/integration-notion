@@ -33,12 +33,12 @@ func DebugResponse(resp *http.Response) {
 
 const tempDir = "/tmp/plakar-notion-restore"
 
-type NotionExporterv2 struct {
+type NotionExporter struct {
 	token  string
 	rootID string //TODO : change this to a user friendly name (e.g. "My Notion Page" instead of "1234567890abcdef")
 }
 
-func NewNotionExporterv2(ctx context.Context, options *exporter.Options, name string, config map[string]string) (exporter.Exporter, error) {
+func NewNotionExporter(ctx context.Context, options *exporter.Options, name string, config map[string]string) (exporter.Exporter, error) {
 	token, ok := config["token"]
 	if !ok {
 		return nil, fmt.Errorf("missing token in config")
@@ -48,21 +48,21 @@ func NewNotionExporterv2(ctx context.Context, options *exporter.Options, name st
 		return nil, fmt.Errorf("missing rootID in config")
 	}
 
-	return &NotionExporterv2{
+	return &NotionExporter{
 		token:  token,
 		rootID: rootID, //rootID must be an existing page ID, this is the page where the files will be exported
 	}, nil
 }
 
-func (n *NotionExporterv2) Root() string {
+func (n *NotionExporter) Root() string {
 	return ""
 }
 
-func (n *NotionExporterv2) CreateDirectory(pathname string) error {
+func (n *NotionExporter) CreateDirectory(pathname string) error {
 	return os.MkdirAll(path.Join(tempDir, pathname), 0700)
 }
 
-func (n *NotionExporterv2) StoreFile(pathname string, fp io.Reader, size int64) error {
+func (n *NotionExporter) StoreFile(pathname string, fp io.Reader, size int64) error {
 	dest := path.Join(tempDir, pathname)
 	f, err := os.Create(dest)
 	defer f.Close()
@@ -79,21 +79,20 @@ func (n *NotionExporterv2) StoreFile(pathname string, fp io.Reader, size int64) 
 	return nil
 }
 
-func (n *NotionExporterv2) SetPermissions(pathname string, fileinfo *objects.FileInfo) error {
+func (n *NotionExporter) SetPermissions(pathname string, fileinfo *objects.FileInfo) error {
 	return nil
 }
 
-func (n *NotionExporterv2) Close() error {
+func (n *NotionExporter) Close() error {
 	err := n.Export()
 	if err != nil {
 		log.Printf("failed to close exporter %v", err)
 		return fmt.Errorf("failed to export: %w", err)
 	}
 	return os.RemoveAll(tempDir) // Clean up the temporary directory
-	return nil
 }
 
-func (n *NotionExporterv2) makeRequest(method, url string, payload []byte) (map[string]any, error) {
+func (n *NotionExporter) makeRequest(method, url string, payload []byte) (map[string]any, error) {
 	req, err := http.NewRequest(method, url, io.NopCloser(bytes.NewReader(payload)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -121,7 +120,7 @@ func (n *NotionExporterv2) makeRequest(method, url string, payload []byte) (map[
 	return jsonData, nil
 }
 
-func (n *NotionExporterv2) CreatePage(payload []byte) (string, error) {
+func (n *NotionExporter) CreatePage(payload []byte) (string, error) {
 	url := fmt.Sprintf("%s/pages", NotionURL)
 	jsonData, err := n.makeRequest("POST", url, payload)
 	if err != nil {
@@ -130,7 +129,7 @@ func (n *NotionExporterv2) CreatePage(payload []byte) (string, error) {
 	return jsonData["id"].(string), nil
 }
 
-func (n *NotionExporterv2) CreateDatabase(payload []byte) (string, error) {
+func (n *NotionExporter) CreateDatabase(payload []byte) (string, error) {
 	url := fmt.Sprintf("%s/databases", NotionURL)
 	jsonData, err := n.makeRequest("POST", url, payload)
 	if err != nil {
@@ -139,7 +138,7 @@ func (n *NotionExporterv2) CreateDatabase(payload []byte) (string, error) {
 	return jsonData["id"].(string), nil
 }
 
-func (n *NotionExporterv2) AddBlock(payload []byte, pageID string) (string, error) {
+func (n *NotionExporter) AddBlock(payload []byte, pageID string) (string, error) {
 	url := fmt.Sprintf("%s/blocks/%s/children", NotionURL, pageID)
 	jsonData, err := n.makeRequest("PATCH", url, payload)
 	if err != nil {
@@ -151,7 +150,7 @@ func (n *NotionExporterv2) AddBlock(payload []byte, pageID string) (string, erro
 }
 
 // AddAllBlocks adds all blocks to the page with the given ID
-func (n *NotionExporterv2) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
+func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
 
 		if block["type"] == "image" {
@@ -266,7 +265,7 @@ func (n *NotionExporterv2) AddAllBlocks(jsonData []map[string]any, newID, pathTo
 	return nil
 }
 
-func (n *NotionExporterv2) AddEntries(newID, pathTo string) error {
+func (n *NotionExporter) AddEntries(newID, pathTo string) error {
 	entries, err := os.ReadDir(pathTo)
 	if err != nil {
 		return fmt.Errorf("failed to read entries from %s: %w", pathTo, err)
@@ -327,7 +326,7 @@ func (n *NotionExporterv2) AddEntries(newID, pathTo string) error {
 	return nil
 }
 
-func (n *NotionExporterv2) Export() error {
+func (n *NotionExporter) Export() error {
 	pathname := path.Join(tempDir, "content.json")
 	file, err := os.Open(pathname)
 	if err != nil {
