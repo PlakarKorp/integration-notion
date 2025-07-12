@@ -7,3 +7,6 @@ connectors:
     homepage: https://github.com/PlakarKorp/integration-notion
     license: ISC
     protocols: [notion]
+  - type: exporter
+    executable: notion-exporter
+    protocols: [notion]

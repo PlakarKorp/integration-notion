@@ -10,55 +10,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"path"
-	"path/filepath"
-	"sync"
-	"time"
 )
-
-type NotionExporter struct {
-	token  string
-	rootID string //TODO : change this to a user friendly name (e.g. "My Notion Page" instead of "1234567890abcdef")
-	sync.Mutex
-	mapMutex sync.RWMutex     // Added RWMutex for protecting pageIDMap
-	timeout  <-chan time.Time // TODO: change this ugly timeout to a more elegant solution
-}
-
-func NewNotionExporter(ctx context.Context, options *exporter.Options, name string, config map[string]string) (exporter.Exporter, error) {
-	token, ok := config["token"]
-	if !ok {
-		return nil, fmt.Errorf("missing token in config")
-	}
-	rootID, ok := config["rootID"]
-	if !ok {
-		return nil, fmt.Errorf("missing rootID in config")
-	}
-
-	return &NotionExporter{
-		token:  token,
-		rootID: rootID, //rootID must be an existing page ID, this is the page where the files will be exported
-	}, nil
-}
-
-func (p *NotionExporter) Root() string {
-	return p.rootID
-}
-
-func (p *NotionExporter) CreateDirectory(pathname string) error {
-	// Notion does not support creating directories
-	return nil
-}
-
-func (p *NotionExporter) SetPermissions(pathname string, fileinfo *objects.FileInfo) error {
-	return nil
-}
-
-var pageIDMap = map[string]string{}
-
-func (p *NotionExporter) Close() error {
-	pageIDMap = map[string]string{}
-	return nil
-}
 
 func DebugResponse(resp *http.Response) {
 	// debug
@@ -77,18 +31,78 @@ func DebugResponse(resp *http.Response) {
 	// end
 }
 
-func (p *NotionExporter) makeRequest(method, url string, payload []byte) (map[string]any, error) {
+const tempDir = "/tmp/plakar-notion-restore"
+
+type NotionExporterv2 struct {
+	token  string
+	rootID string //TODO : change this to a user friendly name (e.g. "My Notion Page" instead of "1234567890abcdef")
+}
+
+func NewNotionExporterv2(ctx context.Context, options *exporter.Options, name string, config map[string]string) (exporter.Exporter, error) {
+	token, ok := config["token"]
+	if !ok {
+		return nil, fmt.Errorf("missing token in config")
+	}
+	rootID, ok := config["rootID"]
+	if !ok {
+		return nil, fmt.Errorf("missing rootID in config")
+	}
+
+	return &NotionExporterv2{
+		token:  token,
+		rootID: rootID, //rootID must be an existing page ID, this is the page where the files will be exported
+	}, nil
+}
+
+func (n *NotionExporterv2) Root() string {
+	return ""
+}
+
+func (n *NotionExporterv2) CreateDirectory(pathname string) error {
+	return os.MkdirAll(path.Join(tempDir, pathname), 0700)
+}
+
+func (n *NotionExporterv2) StoreFile(pathname string, fp io.Reader, size int64) error {
+	dest := path.Join(tempDir, pathname)
+	f, err := os.Create(dest)
+	defer f.Close()
+
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", dest, err)
+	}
+	if _, err := io.Copy(f, fp); err != nil {
+		return fmt.Errorf("failed to copy data to file %s: %w", dest, err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("failed to sync file %s: %w", dest, err)
+	}
+	return nil
+}
+
+func (n *NotionExporterv2) SetPermissions(pathname string, fileinfo *objects.FileInfo) error {
+	return nil
+}
+
+func (n *NotionExporterv2) Close() error {
+	err := n.Export()
+	if err != nil {
+		log.Printf("failed to close exporter %v", err)
+		return fmt.Errorf("failed to export: %w", err)
+	}
+	return os.RemoveAll(tempDir) // Clean up the temporary directory
+	return nil
+}
+
+func (n *NotionExporterv2) makeRequest(method, url string, payload []byte) (map[string]any, error) {
 	req, err := http.NewRequest(method, url, io.NopCloser(bytes.NewReader(payload)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+p.token)
+	req.Header.Set("Authorization", "Bearer "+n.token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Notion-Version", NotionVersionHeader)
 
-	p.Lock()
 	resp, err := http.DefaultClient.Do(req)
-	p.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
@@ -98,155 +112,140 @@ func (p *NotionExporter) makeRequest(method, url string, payload []byte) (map[st
 		DebugResponse(resp)
 		return nil, fmt.Errorf("request failed: status code %d", resp.StatusCode)
 	}
-
-	p.RestartTimeout()
-
 	jsonData := map[string]any{}
 	err = json.NewDecoder(resp.Body).Decode(&jsonData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	p.RestartTimeout()
 	return jsonData, nil
 }
 
-func (p *NotionExporter) AddBlock(payload []byte, pageID string) (string, error) {
-	url := fmt.Sprintf("%s/blocks/%s/children", NotionURL, pageID)
-	jsonData, err := p.makeRequest("PATCH", url, payload)
-	if err != nil {
-		return "", err
-	}
-	blockID := jsonData["results"].([]any)[0].(map[string]any)["id"].(string)
-	return blockID, nil
-}
-
-func (p *NotionExporter) CreatePage(payload []byte) (string, error) {
+func (n *NotionExporterv2) CreatePage(payload []byte) (string, error) {
 	url := fmt.Sprintf("%s/pages", NotionURL)
-	jsonData, err := p.makeRequest("POST", url, payload)
+	jsonData, err := n.makeRequest("POST", url, payload)
 	if err != nil {
 		return "", err
 	}
 	return jsonData["id"].(string), nil
 }
 
-func (p *NotionExporter) UpdatePage(payload []byte, pageID string) error {
-	url := fmt.Sprintf("%s/pages/%s", NotionURL, pageID)
-	_, err := p.makeRequest("PATCH", url, payload)
-	if err != nil {
-		return fmt.Errorf("failed to patch page: %w", err)
-	}
-	return nil
-}
-
-func (p *NotionExporter) CreateDatabase(payload []byte) (string, error) {
+func (n *NotionExporterv2) CreateDatabase(payload []byte) (string, error) {
 	url := fmt.Sprintf("%s/databases", NotionURL)
-	jsonData, err := p.makeRequest("POST", url, payload)
+	jsonData, err := n.makeRequest("POST", url, payload)
 	if err != nil {
 		return "", fmt.Errorf("failed to create database: %w", err)
 	}
 	return jsonData["id"].(string), nil
 }
 
-func (p *NotionExporter) UpdateDatabase(payload []byte, databaseID string) error {
-	url := fmt.Sprintf("%s/databases/%s", NotionURL, databaseID)
-	_, err := p.makeRequest("PATCH", url, payload)
+func (n *NotionExporterv2) AddBlock(payload []byte, pageID string) (string, error) {
+	url := fmt.Sprintf("%s/blocks/%s/children", NotionURL, pageID)
+	jsonData, err := n.makeRequest("PATCH", url, payload)
 	if err != nil {
-		return fmt.Errorf("failed to update database: %w", err)
+		return "", err
 	}
-	return nil
+	blockID := jsonData["results"].([]any)[0].(map[string]any)["id"].(string) // considering blocks are added one by one
+	//TODO: considering to handle multiple blocks in the future to avoid too many requests
+	return blockID, nil
 }
 
-func (p *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, parentType string) error {
+// AddAllBlocks adds all blocks to the page with the given ID
+func (n *NotionExporterv2) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
+
+		if block["type"] == "image" {
+			continue
+		}
+
 		if block["type"] == "child_page" {
-			if parentType == "block_id" {
-				// Special case for child page inside a block
-				payload := map[string]any{
-					"parent": map[string]any{
-						"type":    "page_id",
-						"page_id": p.rootID, //TODO: change this to the closest parent 'page' ID (not block ID)
-					},
-					"properties": map[string]any{},
-					"children":   []any{},
-				}
-
-				data, err := json.Marshal(payload)
+			payload, err := func() (map[string]any, error) {
+				dir := path.Join(pathTo, block["id"].(string))
+				filePath := path.Join(dir, "page.json")
+				f, err := os.Open(filePath)
 				if err != nil {
-					return fmt.Errorf("failed to marshal JSON: %w", err)
+					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
 				}
-				newPageID, err := p.CreatePage(data)
-				if err != nil {
-					return fmt.Errorf("failed to post page: %w", err)
+				defer f.Close()
+				var pageData map[string]any
+				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
+					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
 				}
-				p.mapMutex.Lock()
-				pageIDMap[block["id"].(string)] = newPageID
-				p.mapMutex.Unlock()
-
-				// Add the link to the new page
-				linkBlock := map[string]any{
-					"object": "block",
-					"type":   "link_to_page",
-					"link_to_page": map[string]any{
-						"page_id": newPageID, // Use the ID of the newly created page
-					},
-				}
-
-				payload = map[string]any{
-					"children": []any{
-						linkBlock,
-					},
-				}
-
-				data, err = json.Marshal(payload)
-				if err != nil {
-					return fmt.Errorf("failed to marshal JSON for link block: %w", err)
-				}
-
-				_, err = p.AddBlock(data, newID) // Add the link block to the parent
-				if err != nil {
-					return fmt.Errorf("failed to add link block: %w", err)
-				}
-			} else {
-				payload := map[string]any{}
-				payload["parent"] = map[string]any{
-					"type":     parentType,
-					parentType: newID,
-				}
-				payload["properties"] = map[string]any{}
-				payload["children"] = []any{}
-				data, err := json.Marshal(payload)
-				if err != nil {
-					return fmt.Errorf("failed to marshal JSON: %w", err)
-				}
-				newPageID, err := p.CreatePage(data)
-				if err != nil {
-					return fmt.Errorf("failed to post page: %w", err)
-				}
-				p.mapMutex.Lock()
-				pageIDMap[block["id"].(string)] = newPageID
-				p.mapMutex.Unlock()
+				return pageData, nil
+			}()
+			if err != nil {
+				return err
 			}
-		} else if block["type"] == "database" { //?? is this correct?
-			payload := map[string]any{
-				"parent": map[string]any{
-					"type":     parentType,
-					parentType: newID,
-				},
-				"properties": block["properties"],
-				"title":      block["title"],
+
+			delete(payload, "id")
+			children := payload["children"].([]any) // save it for later
+			payload["children"] = []any{}           // since request are limited to 100 blocks, we will add them later
+			payload["parent"] = map[string]any{
+				"type":    "page_id",
+				"page_id": newID,
 			}
+
+			data, err := json.Marshal(payload)
+
+			log.Printf("Creating page with data: %s", string(data))
+
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			newPageID, err := n.CreatePage(data)
+			if err != nil {
+				return fmt.Errorf("failed to create page: %w", err)
+			}
+			log.Printf("Created page with ID: %s", newPageID)
+
+			blocks := make([]map[string]any, len(children))
+			for i, child := range children {
+				blocks[i] = child.(map[string]any)
+			}
+			err = n.AddAllBlocks(blocks, newPageID, path.Join(pathTo, block["id"].(string)))
+			if err != nil {
+				return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
+			}
+
+		} else if block["type"] == "child_database" {
+			payload, err := func() (map[string]any, error) {
+				dir := path.Join(pathTo, block["id"].(string))
+				filePath := path.Join(dir, "database.json")
+				f, err := os.Open(filePath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
+				}
+				defer f.Close()
+				var pageData map[string]any
+				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
+					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
+				}
+				return pageData, nil
+			}()
+			if err != nil {
+				return err
+			}
+
+			delete(payload, "id")
+			payload["parent"] = map[string]any{
+				"type":    "page_id",
+				"page_id": newID,
+			}
+
 			data, err := json.Marshal(payload)
 			if err != nil {
 				return fmt.Errorf("failed to marshal JSON: %w", err)
 			}
-			databaseID, err := p.CreateDatabase(data)
+			newDatabaseID, err := n.CreateDatabase(data)
 			if err != nil {
 				return fmt.Errorf("failed to create database: %w", err)
 			}
-			p.mapMutex.Lock()
-			pageIDMap[block["id"].(string)] = databaseID
-			p.mapMutex.Unlock()
+			log.Printf("Created database with ID: %s", newDatabaseID)
+
+			err = n.AddEntries(newDatabaseID, path.Join(pathTo, block["id"].(string)))
+			if err != nil {
+				return fmt.Errorf("failed to add entries: %w", err)
+			}
 
 		} else { //standard block
 			payload := map[string]any{
@@ -258,212 +257,182 @@ func (p *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, parentTy
 			if err != nil {
 				return fmt.Errorf("failed to marshal JSON: %w", err)
 			}
-			newBlockID, err := p.AddBlock(data, newID)
+			_, err = n.AddBlock(data, newID)
 			if err != nil {
 				return fmt.Errorf("failed to patch block: %w", err)
 			}
-			p.mapMutex.Lock()
-			pageIDMap[block["id"].(string)] = newBlockID
-			p.mapMutex.Unlock()
 		}
 	}
 	return nil
 }
 
-func (p *NotionExporter) RestartTimeout() {
-	p.timeout = time.After(5 * time.Second)
-}
-
-// StoreFile is outdated and will be removed in the future
-func (p *NotionExporter) StoreFile(pathname string, fp io.Reader, size int64) error {
-
-	filetype := filepath.Base(pathname)
-	OldID := path.Base(path.Dir(pathname))
-	p.RestartTimeout()
-
-	if filetype == "content.json" { //POST empty pages or database to the root page
-
-		var jsonData []map[string]any
-		err := json.NewDecoder(fp).Decode(&jsonData)
+func (n *NotionExporterv2) AddEntries(newID, pathTo string) error {
+	entries, err := os.ReadDir(pathTo)
+	if err != nil {
+		return fmt.Errorf("failed to read entries from %s: %w", pathTo, err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		payload, err := func() (map[string]any, error) {
+			dir := path.Join(pathTo, entry.Name())
+			filePath := path.Join(dir, "page.json") //in database there is only pages
+			f, err := os.Open(filePath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
+			}
+			defer f.Close()
+			var pageData map[string]any
+			if err := json.NewDecoder(f).Decode(&pageData); err != nil {
+				return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
+			}
+			return pageData, nil
+		}()
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal JSON: %w", err)
+			return err
 		}
 
-		// Create a new page for each entry in the JSON array
-		for _, entry := range jsonData {
-			payload := map[string]any{
-				"parent": map[string]any{
-					"type":    "page_id",
-					"page_id": p.rootID,
-				},
-				"properties": map[string]any{},
-			}
-			if entry["object"] == "page" {
-				payload["children"] = []any{}
-			} else if entry["object"] == "database" {
-				payload["properties"] = map[string]any{
-					"Name": map[string]any{
-						"title": map[string]any{},
-					},
+		delete(payload, "id")
+		children := payload["children"].([]any) // save it for later
+		payload["children"] = []any{}           // since request are limited to 100 blocks, we will add them later
+		payload["parent"] = map[string]any{
+			"type":        "database_id",
+			"database_id": newID,
+		}
+
+		data, err := json.Marshal(payload)
+
+		log.Printf("Creating page with data: %s", string(data))
+
+		if err != nil {
+			return fmt.Errorf("failed to marshal JSON: %w", err)
+		}
+		newPageID, err := n.CreatePage(data)
+		if err != nil {
+			return fmt.Errorf("failed to create page: %w", err)
+		}
+		log.Printf("Created page with ID: %s", newPageID)
+
+		blocks := make([]map[string]any, len(children))
+		for i, child := range children {
+			blocks[i] = child.(map[string]any)
+		}
+		err = n.AddAllBlocks(blocks, newPageID, path.Join(pathTo, entry.Name()))
+		if err != nil {
+			return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
+		}
+
+	}
+	return nil
+}
+
+func (n *NotionExporterv2) Export() error {
+	pathname := path.Join(tempDir, "content.json")
+	file, err := os.Open(pathname)
+	if err != nil {
+		return fmt.Errorf("failed to open file %s: %w", pathname, err)
+	}
+	defer file.Close()
+
+	var jsonData []map[string]any
+	if err := json.NewDecoder(file).Decode(&jsonData); err != nil {
+		return fmt.Errorf("failed to decode JSON from file %s: %w", pathname, err)
+	}
+
+	for _, entry := range jsonData {
+		if entry["object"] == "page" {
+			payload, err := func() (map[string]any, error) {
+				dir := path.Join(tempDir, entry["id"].(string))
+				filePath := path.Join(dir, "page.json")
+				f, err := os.Open(filePath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
 				}
-			} else {
-				return fmt.Errorf("unsupported object type: %s", entry["object"])
+				defer f.Close()
+				var pageData map[string]any
+				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
+					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
+				}
+				return pageData, nil
+			}()
+			if err != nil {
+				return err
+			}
+
+			delete(payload, "id")
+			children := payload["children"].([]any) // save it for later
+			payload["children"] = []any{}           // since request are limited to 100 blocks, we will add them later
+			payload["parent"] = map[string]any{
+				"type":    "page_id",
+				"page_id": n.rootID,
+			}
+
+			data, err := json.Marshal(payload)
+
+			log.Printf("Creating page with data: %s", string(data))
+
+			if err != nil {
+				return fmt.Errorf("failed to marshal JSON: %w", err)
+			}
+			newPageID, err := n.CreatePage(data)
+			if err != nil {
+				return fmt.Errorf("failed to create page: %w", err)
+			}
+			log.Printf("Created page with ID: %s", newPageID)
+
+			blocks := make([]map[string]any, len(children))
+			for i, child := range children {
+				blocks[i] = child.(map[string]any)
+			}
+			err = n.AddAllBlocks(blocks, newPageID, path.Join(tempDir, entry["id"].(string)))
+			if err != nil {
+				return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
+			}
+
+		} else if entry["object"] == "database" {
+			payload, err := func() (map[string]any, error) {
+				dir := path.Join(tempDir, entry["id"].(string))
+				filePath := path.Join(dir, "database.json")
+				f, err := os.Open(filePath)
+				if err != nil {
+					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
+				}
+				defer f.Close()
+				var pageData map[string]any
+				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
+					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
+				}
+				return pageData, nil
+			}()
+			if err != nil {
+				return err
+			}
+
+			delete(payload, "id")
+			payload["parent"] = map[string]any{
+				"type":    "page_id",
+				"page_id": n.rootID,
 			}
 
 			data, err := json.Marshal(payload)
 			if err != nil {
 				return fmt.Errorf("failed to marshal JSON: %w", err)
 			}
+			newDatabaseID, err := n.CreateDatabase(data)
+			if err != nil {
+				return fmt.Errorf("failed to create database: %w", err)
+			}
+			log.Printf("Created database with ID: %s", newDatabaseID)
 
-			var newId string
-			if entry["object"] == "page" {
-				newId, err = p.CreatePage(data)
-				if err != nil {
-					return fmt.Errorf("failed to post page: %w", err)
-				}
-			} else if entry["object"] == "database" {
-				newId, err = p.CreateDatabase(data)
-				if err != nil {
-					return fmt.Errorf("failed to post database: %w", err)
-				}
+			err = n.AddEntries(newDatabaseID, path.Join(tempDir, entry["id"].(string)))
+			if err != nil {
+				return fmt.Errorf("failed to add entries: %w", err)
 			}
 
-			p.mapMutex.Lock()
-			pageIDMap[entry["id"].(string)] = newId
-			p.mapMutex.Unlock()
+		} else {
+			return fmt.Errorf("unsupported object type: %s", entry["object"])
 		}
-
-	} else if filetype == "page.json" { //PATCH header to the page OldID
-		newID := func() string {
-			for {
-				select {
-				case <-p.timeout:
-					return "" // Timeout reached
-				default:
-					p.mapMutex.RLock()
-					id, ok := pageIDMap[OldID]
-					p.mapMutex.RUnlock()
-					if ok {
-						return id
-					}
-				}
-			}
-		}()
-		if newID == "" {
-			return fmt.Errorf("failed to find new ID for page %s", OldID)
-		}
-
-		var jsonData map[string]any
-		err := json.NewDecoder(fp).Decode(&jsonData)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal JSON: %w", err)
-		}
-		delete(jsonData["properties"].(map[string]any), "Name") //TODO: remove this tmp fix
-		jsonData2 := map[string]any{
-			"properties": jsonData["properties"],
-			"icon":       jsonData["icon"],
-			"cover":      jsonData["cover"],
-		}
-		payload, err := json.Marshal(jsonData2)
-		if err != nil {
-			return fmt.Errorf("failed to marshal JSON: %w", err)
-		}
-		err = p.UpdatePage(payload, newID)
-		if err != nil {
-			return fmt.Errorf("failed to patch page: %w", err)
-		}
-
-		children, ok := jsonData["children"].([]any)
-		if !ok || len(children) == 0 {
-			log.Printf("%s: children is empty or invalid", OldID)
-			return nil
-		}
-
-		blocks := make([]map[string]any, len(children))
-		for i, child := range children {
-			blocks[i] = child.(map[string]any)
-		}
-
-		err = p.AddAllBlocks(blocks, newID, "page_id")
-		if err != nil {
-			return fmt.Errorf("failed to add blocks: %w", err)
-		}
-
-	} else if filetype == "blocks.json" { //PATCH blocks to the page OldID
-
-		newID := func() string {
-			for {
-				select {
-				case <-p.timeout:
-					return "" // Timeout reached
-				default:
-					p.mapMutex.RLock()
-					id, ok := pageIDMap[OldID]
-					p.mapMutex.RUnlock()
-					if ok {
-						return id
-					}
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-		}()
-
-		var jsonData []map[string]any
-		err := json.NewDecoder(fp).Decode(&jsonData)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal JSON: %w", err)
-		}
-
-		err = p.AddAllBlocks(jsonData, newID, "block_id")
-		if err != nil {
-			return fmt.Errorf("failed to add blocks: %w", err)
-		}
-
-	} else if filetype == "database.json" {
-
-		newDatabaseID := func() string {
-			for {
-				select {
-				case <-p.timeout:
-					return "" // Timeout reached
-				default:
-					p.mapMutex.RLock()
-					id, ok := pageIDMap[OldID]
-					p.mapMutex.RUnlock()
-					if ok {
-						return id
-					}
-					time.Sleep(10 * time.Millisecond)
-				}
-			}
-		}()
-		if newDatabaseID == "" {
-			return fmt.Errorf("failed to find new ID for database %s", OldID)
-		}
-
-		var jsonData map[string]any
-		err := json.NewDecoder(fp).Decode(&jsonData)
-		if err != nil {
-			return fmt.Errorf("failed to unmarshal JSON: %w", err)
-		}
-		jsonData2 := map[string]any{
-			"properties": jsonData["properties"],
-			"icon":       jsonData["icon"],
-			"cover":      jsonData["cover"],
-		}
-		payload, err := json.Marshal(jsonData2)
-		if err != nil {
-			return fmt.Errorf("failed to marshal JSON: %w", err)
-		}
-
-		// Update the existing database
-		err = p.UpdateDatabase(payload, newDatabaseID)
-		if err != nil {
-			return fmt.Errorf("failed to update database: %w", err)
-		}
-	} else {
-		return fmt.Errorf("unsupported file type: %s", filetype)
 	}
-
 	return nil
 }
