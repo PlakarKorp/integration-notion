@@ -6,7 +6,7 @@ import (
 )
 
 func main() {
-	err := sdk.RunExporter(notion.NewNotionExporterv2)
+	err := sdk.RunExporter(notion.NewNotionExporter)
 	if err != nil {
 		panic(err)
 	}
