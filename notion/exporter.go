@@ -183,6 +183,22 @@ func preparePayload(payload map[string]any, parentType, parentID string) (cleane
 	return payload, children, nil
 }
 
+func (n *NotionExporter) createPageWithBlocks(payload map[string]any, children []map[string]any, pathTo string) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	log.Printf("Creating page with data: %s", string(data))
+
+	newPageID, err := n.CreatePage(data)
+	if err != nil {
+		return fmt.Errorf("failed to create page: %w", err)
+	}
+	log.Printf("Created page with ID: %s", newPageID)
+
+	return n.AddAllBlocks(children, newPageID, pathTo)
+}
+
 // AddAllBlocks adds all blocks to the page with the given ID
 func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
@@ -199,23 +215,13 @@ func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo s
 			}
 
 			payload, children, err := preparePayload(payload, "page_id", newID)
-
-			data, err := json.Marshal(payload)
-
-			log.Printf("Creating page with data: %s", string(data))
-
 			if err != nil {
-				return fmt.Errorf("failed to marshal JSON: %w", err)
+				return fmt.Errorf("failed to prepare payload: %w", err)
 			}
-			newPageID, err := n.CreatePage(data)
-			if err != nil {
-				return fmt.Errorf("failed to create page: %w", err)
-			}
-			log.Printf("Created page with ID: %s", newPageID)
 
-			err = n.AddAllBlocks(children, newPageID, dir)
+			err = n.createPageWithBlocks(payload, children, dir)
 			if err != nil {
-				return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
+				return fmt.Errorf("failed to create page with blocks: %w", err)
 			}
 
 		} else if block["type"] == "child_database" {
@@ -280,23 +286,13 @@ func (n *NotionExporter) AddEntries(newID, pathTo string) error {
 		}
 
 		payload, children, err := preparePayload(payload, "database_id", newID)
-
-		data, err := json.Marshal(payload)
-
-		log.Printf("Creating page with data: %s", string(data))
-
 		if err != nil {
-			return fmt.Errorf("failed to marshal JSON: %w", err)
+			return fmt.Errorf("failed to prepare payload: %w", err)
 		}
-		newPageID, err := n.CreatePage(data)
-		if err != nil {
-			return fmt.Errorf("failed to create page: %w", err)
-		}
-		log.Printf("Created page with ID: %s", newPageID)
 
-		err = n.AddAllBlocks(children, newPageID, dir)
+		err = n.createPageWithBlocks(payload, children, dir)
 		if err != nil {
-			return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
+			return fmt.Errorf("failed to create page with blocks: %w", err)
 		}
 
 	}
@@ -326,23 +322,13 @@ func (n *NotionExporter) Export() error {
 			}
 
 			payload, children, err := preparePayload(payload, "page_id", n.rootID) //TODO: look if we always want to use a page as parent here
-
-			data, err := json.Marshal(payload)
-
-			log.Printf("Creating page with data: %s", string(data))
-
 			if err != nil {
-				return fmt.Errorf("failed to marshal JSON: %w", err)
+				return fmt.Errorf("failed to prepare payload: %w", err)
 			}
-			newPageID, err := n.CreatePage(data)
-			if err != nil {
-				return fmt.Errorf("failed to create page: %w", err)
-			}
-			log.Printf("Created page with ID: %s", newPageID)
 
-			err = n.AddAllBlocks(children, newPageID, dir)
+			err = n.createPageWithBlocks(payload, children, dir)
 			if err != nil {
-				return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
+				return fmt.Errorf("failed to create page with blocks: %w", err)
 			}
 
 		} else if entry["object"] == "database" {
