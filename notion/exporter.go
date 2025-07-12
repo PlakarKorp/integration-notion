@@ -149,29 +149,31 @@ func (n *NotionExporter) AddBlock(payload []byte, pageID string) (string, error)
 	return blockID, nil
 }
 
+func loadJSONFromFile(filePath string) (map[string]any, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	var data map[string]any
+	if err := json.NewDecoder(f).Decode(&data); err != nil {
+		return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
+	}
+	return data, nil
+}
+
 // AddAllBlocks adds all blocks to the page with the given ID
 func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
+		dir := path.Join(pathTo, block["id"].(string))
 
 		if block["type"] == "image" {
 			continue
 		}
 
 		if block["type"] == "child_page" {
-			payload, err := func() (map[string]any, error) {
-				dir := path.Join(pathTo, block["id"].(string))
-				filePath := path.Join(dir, "page.json")
-				f, err := os.Open(filePath)
-				if err != nil {
-					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
-				}
-				defer f.Close()
-				var pageData map[string]any
-				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
-					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
-				}
-				return pageData, nil
-			}()
+			payload, err := loadJSONFromFile(path.Join(dir, "page.json"))
 			if err != nil {
 				return err
 			}
@@ -201,26 +203,13 @@ func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo s
 			for i, child := range children {
 				blocks[i] = child.(map[string]any)
 			}
-			err = n.AddAllBlocks(blocks, newPageID, path.Join(pathTo, block["id"].(string)))
+			err = n.AddAllBlocks(blocks, newPageID, dir)
 			if err != nil {
 				return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
 			}
 
 		} else if block["type"] == "child_database" {
-			payload, err := func() (map[string]any, error) {
-				dir := path.Join(pathTo, block["id"].(string))
-				filePath := path.Join(dir, "database.json")
-				f, err := os.Open(filePath)
-				if err != nil {
-					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
-				}
-				defer f.Close()
-				var pageData map[string]any
-				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
-					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
-				}
-				return pageData, nil
-			}()
+			payload, err := loadJSONFromFile(path.Join(dir, "database.json"))
 			if err != nil {
 				return err
 			}
@@ -241,7 +230,7 @@ func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo s
 			}
 			log.Printf("Created database with ID: %s", newDatabaseID)
 
-			err = n.AddEntries(newDatabaseID, path.Join(pathTo, block["id"].(string)))
+			err = n.AddEntries(newDatabaseID, dir)
 			if err != nil {
 				return fmt.Errorf("failed to add entries: %w", err)
 			}
@@ -274,20 +263,8 @@ func (n *NotionExporter) AddEntries(newID, pathTo string) error {
 		if !entry.IsDir() {
 			continue
 		}
-		payload, err := func() (map[string]any, error) {
-			dir := path.Join(pathTo, entry.Name())
-			filePath := path.Join(dir, "page.json") //in database there is only pages
-			f, err := os.Open(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
-			}
-			defer f.Close()
-			var pageData map[string]any
-			if err := json.NewDecoder(f).Decode(&pageData); err != nil {
-				return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
-			}
-			return pageData, nil
-		}()
+		dir := path.Join(pathTo, entry.Name())
+		payload, err := loadJSONFromFile(path.Join(dir, "page.json")) // entry of a database is a page type
 		if err != nil {
 			return err
 		}
@@ -317,7 +294,7 @@ func (n *NotionExporter) AddEntries(newID, pathTo string) error {
 		for i, child := range children {
 			blocks[i] = child.(map[string]any)
 		}
-		err = n.AddAllBlocks(blocks, newPageID, path.Join(pathTo, entry.Name()))
+		err = n.AddAllBlocks(blocks, newPageID, dir)
 		if err != nil {
 			return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
 		}
@@ -340,21 +317,10 @@ func (n *NotionExporter) Export() error {
 	}
 
 	for _, entry := range jsonData {
+		dir := path.Join(tempDir, entry["id"].(string))
+
 		if entry["object"] == "page" {
-			payload, err := func() (map[string]any, error) {
-				dir := path.Join(tempDir, entry["id"].(string))
-				filePath := path.Join(dir, "page.json")
-				f, err := os.Open(filePath)
-				if err != nil {
-					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
-				}
-				defer f.Close()
-				var pageData map[string]any
-				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
-					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
-				}
-				return pageData, nil
-			}()
+			payload, err := loadJSONFromFile(path.Join(dir, "page.json"))
 			if err != nil {
 				return err
 			}
@@ -384,26 +350,13 @@ func (n *NotionExporter) Export() error {
 			for i, child := range children {
 				blocks[i] = child.(map[string]any)
 			}
-			err = n.AddAllBlocks(blocks, newPageID, path.Join(tempDir, entry["id"].(string)))
+			err = n.AddAllBlocks(blocks, newPageID, dir)
 			if err != nil {
 				return fmt.Errorf("failed to add blocks to page %s: %w", newPageID, err)
 			}
 
 		} else if entry["object"] == "database" {
-			payload, err := func() (map[string]any, error) {
-				dir := path.Join(tempDir, entry["id"].(string))
-				filePath := path.Join(dir, "database.json")
-				f, err := os.Open(filePath)
-				if err != nil {
-					return nil, fmt.Errorf("failed to open %s: %w", filePath, err)
-				}
-				defer f.Close()
-				var pageData map[string]any
-				if err := json.NewDecoder(f).Decode(&pageData); err != nil {
-					return nil, fmt.Errorf("failed to decode JSON from %s: %w", filePath, err)
-				}
-				return pageData, nil
-			}()
+			payload, err := loadJSONFromFile(path.Join(dir, "database.json"))
 			if err != nil {
 				return err
 			}
@@ -424,7 +377,7 @@ func (n *NotionExporter) Export() error {
 			}
 			log.Printf("Created database with ID: %s", newDatabaseID)
 
-			err = n.AddEntries(newDatabaseID, path.Join(tempDir, entry["id"].(string)))
+			err = n.AddEntries(newDatabaseID, dir)
 			if err != nil {
 				return fmt.Errorf("failed to add entries: %w", err)
 			}
