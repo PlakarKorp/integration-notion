@@ -84,7 +84,7 @@ func (n *NotionExporter) SetPermissions(pathname string, fileinfo *objects.FileI
 }
 
 func (n *NotionExporter) Close() error {
-	err := n.Export()
+	err := n.export()
 	if err != nil {
 		log.Printf("failed to close exporter %v", err)
 		return fmt.Errorf("failed to export: %w", err)
@@ -120,7 +120,7 @@ func (n *NotionExporter) makeRequest(method, url string, payload []byte) (map[st
 	return jsonData, nil
 }
 
-func (n *NotionExporter) CreatePage(payload []byte) (string, error) {
+func (n *NotionExporter) createPage(payload []byte) (string, error) {
 	url := fmt.Sprintf("%s/pages", NotionURL)
 	jsonData, err := n.makeRequest("POST", url, payload)
 	if err != nil {
@@ -129,7 +129,7 @@ func (n *NotionExporter) CreatePage(payload []byte) (string, error) {
 	return jsonData["id"].(string), nil
 }
 
-func (n *NotionExporter) CreateDatabase(payload []byte) (string, error) {
+func (n *NotionExporter) createDatabase(payload []byte) (string, error) {
 	url := fmt.Sprintf("%s/databases", NotionURL)
 	jsonData, err := n.makeRequest("POST", url, payload)
 	if err != nil {
@@ -138,7 +138,7 @@ func (n *NotionExporter) CreateDatabase(payload []byte) (string, error) {
 	return jsonData["id"].(string), nil
 }
 
-func (n *NotionExporter) AddBlock(payload []byte, pageID string) (string, error) {
+func (n *NotionExporter) addBlock(payload []byte, pageID string) (string, error) {
 	url := fmt.Sprintf("%s/blocks/%s/children", NotionURL, pageID)
 	jsonData, err := n.makeRequest("PATCH", url, payload)
 	if err != nil {
@@ -190,13 +190,13 @@ func (n *NotionExporter) createPageWithBlocks(payload map[string]any, children [
 	}
 	log.Printf("Creating page with data: %s", string(data))
 
-	newPageID, err := n.CreatePage(data)
+	newPageID, err := n.createPage(data)
 	if err != nil {
 		return fmt.Errorf("failed to create page: %w", err)
 	}
 	log.Printf("Created page with ID: %s", newPageID)
 
-	return n.AddAllBlocks(children, newPageID, pathTo)
+	return n.addAllBlocks(children, newPageID, pathTo)
 }
 
 func (n *NotionExporter) createDatabaseWithEntries(payload map[string]any, dbPath string) error {
@@ -204,16 +204,15 @@ func (n *NotionExporter) createDatabaseWithEntries(payload map[string]any, dbPat
 	if err != nil {
 		return fmt.Errorf("failed to marshal JSON: %w", err)
 	}
-	newDatabaseID, err := n.CreateDatabase(data)
+	newDatabaseID, err := n.createDatabase(data)
 	if err != nil {
 		return fmt.Errorf("failed to create database: %w", err)
 	}
 	log.Printf("Created database with ID: %s", newDatabaseID)
-	return n.AddEntries(newDatabaseID, dbPath)
+	return n.addEntries(newDatabaseID, dbPath)
 }
 
-// AddAllBlocks adds all blocks to the page with the given ID
-func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
+func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
 		dir := path.Join(pathTo, block["id"].(string))
 
@@ -264,7 +263,7 @@ func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo s
 			if err != nil {
 				return fmt.Errorf("failed to marshal JSON: %w", err)
 			}
-			_, err = n.AddBlock(data, newID)
+			_, err = n.addBlock(data, newID)
 			if err != nil {
 				return fmt.Errorf("failed to patch block: %w", err)
 			}
@@ -273,7 +272,7 @@ func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo s
 	return nil
 }
 
-func (n *NotionExporter) AddEntries(newID, pathTo string) error {
+func (n *NotionExporter) addEntries(newID, pathTo string) error {
 	entries, err := os.ReadDir(pathTo)
 	if err != nil {
 		return fmt.Errorf("failed to read entries from %s: %w", pathTo, err)
@@ -302,7 +301,7 @@ func (n *NotionExporter) AddEntries(newID, pathTo string) error {
 	return nil
 }
 
-func (n *NotionExporter) Export() error {
+func (n *NotionExporter) export() error {
 	pathname := path.Join(tempDir, "content.json")
 	file, err := os.Open(pathname)
 	if err != nil {
