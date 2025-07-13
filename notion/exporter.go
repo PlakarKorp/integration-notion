@@ -212,6 +212,33 @@ func (n *NotionExporter) createDatabaseWithEntries(payload map[string]any, dbPat
 	return n.addEntries(newDatabaseID, dbPath)
 }
 
+func (n *NotionExporter) exportPageFromFile(pathname, parentType, parentID string) error {
+	payload, err := loadJSONFromFile(pathname)
+	if err != nil {
+		return err
+	}
+	payload, children, err := preparePayload(payload, parentType, parentID)
+	if err != nil {
+		return err
+	}
+	return n.createPageWithBlocks(payload, children, path.Dir(pathname))
+}
+
+func (n *NotionExporter) exportDatabaseFromFile(pathname, parentType, parentID string) error {
+	payload, err := loadJSONFromFile(pathname)
+	if err != nil {
+		return err
+	}
+
+	delete(payload, "id")
+	payload["parent"] = map[string]any{
+		"type":     parentType,
+		parentType: parentID,
+	}
+
+	return n.createDatabaseWithEntries(payload, path.Dir(pathname))
+}
+
 func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
 		dir := path.Join(pathTo, block["id"].(string))
@@ -221,38 +248,15 @@ func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo s
 		}
 
 		if block["type"] == "child_page" {
-			payload, err := loadJSONFromFile(path.Join(dir, "page.json"))
+			err := n.exportPageFromFile(path.Join(dir, "page.json"), "page_id", newID)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to export child page: %w", err)
 			}
-
-			payload, children, err := preparePayload(payload, "page_id", newID)
-			if err != nil {
-				return fmt.Errorf("failed to prepare payload: %w", err)
-			}
-
-			err = n.createPageWithBlocks(payload, children, dir)
-			if err != nil {
-				return fmt.Errorf("failed to create page with blocks: %w", err)
-			}
-
 		} else if block["type"] == "child_database" {
-			payload, err := loadJSONFromFile(path.Join(dir, "database.json"))
+			err := n.exportDatabaseFromFile(path.Join(dir, "database.json"), "page_id", newID)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to export child database: %w", err)
 			}
-
-			delete(payload, "id")
-			payload["parent"] = map[string]any{
-				"type":    "page_id",
-				"page_id": newID,
-			}
-
-			err = n.createDatabaseWithEntries(payload, dir)
-			if err != nil {
-				return fmt.Errorf("failed to create database with entries: %w", err)
-			}
-
 		} else { //standard block
 			payload := map[string]any{
 				"children": []any{
@@ -282,21 +286,11 @@ func (n *NotionExporter) addEntries(newID, pathTo string) error {
 			continue
 		}
 		dir := path.Join(pathTo, entry.Name())
-		payload, err := loadJSONFromFile(path.Join(dir, "page.json")) // entry of a database is a page type
-		if err != nil {
-			return err
-		}
 
-		payload, children, err := preparePayload(payload, "database_id", newID)
+		err := n.exportPageFromFile(path.Join(dir, "page.json"), "database_id", newID)
 		if err != nil {
-			return fmt.Errorf("failed to prepare payload: %w", err)
+			return fmt.Errorf("failed to export page: %w", err)
 		}
-
-		err = n.createPageWithBlocks(payload, children, dir)
-		if err != nil {
-			return fmt.Errorf("failed to create page with blocks: %w", err)
-		}
-
 	}
 	return nil
 }
@@ -318,38 +312,16 @@ func (n *NotionExporter) export() error {
 		dir := path.Join(tempDir, entry["id"].(string))
 
 		if entry["object"] == "page" {
-			payload, err := loadJSONFromFile(path.Join(dir, "page.json"))
+			err := n.exportPageFromFile(path.Join(dir, "page.json"), "page_id", n.rootID)
 			if err != nil {
-				return err
-			}
-
-			payload, children, err := preparePayload(payload, "page_id", n.rootID) //TODO: look if we always want to use a page as parent here
-			if err != nil {
-				return fmt.Errorf("failed to prepare payload: %w", err)
-			}
-
-			err = n.createPageWithBlocks(payload, children, dir)
-			if err != nil {
-				return fmt.Errorf("failed to create page with blocks: %w", err)
+				return fmt.Errorf("failed to export page: %w", err)
 			}
 
 		} else if entry["object"] == "database" {
-			payload, err := loadJSONFromFile(path.Join(dir, "database.json"))
+			err := n.exportDatabaseFromFile(path.Join(dir, "database.json"), "page_id", n.rootID)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to export database: %w", err)
 			}
-
-			delete(payload, "id")
-			payload["parent"] = map[string]any{
-				"type":    "page_id",
-				"page_id": n.rootID,
-			}
-
-			err = n.createDatabaseWithEntries(payload, dir)
-			if err != nil {
-				return fmt.Errorf("failed to create database with entries: %w", err)
-			}
-
 		} else {
 			return fmt.Errorf("unsupported object type: %s", entry["object"])
 		}
