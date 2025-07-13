@@ -199,6 +199,19 @@ func (n *NotionExporter) createPageWithBlocks(payload map[string]any, children [
 	return n.AddAllBlocks(children, newPageID, pathTo)
 }
 
+func (n *NotionExporter) createDatabaseWithEntries(payload map[string]any, dbPath string) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+	newDatabaseID, err := n.CreateDatabase(data)
+	if err != nil {
+		return fmt.Errorf("failed to create database: %w", err)
+	}
+	log.Printf("Created database with ID: %s", newDatabaseID)
+	return n.AddEntries(newDatabaseID, dbPath)
+}
+
 // AddAllBlocks adds all blocks to the page with the given ID
 func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
 	for _, block := range jsonData { //PATCH each block to the page
@@ -236,19 +249,9 @@ func (n *NotionExporter) AddAllBlocks(jsonData []map[string]any, newID, pathTo s
 				"page_id": newID,
 			}
 
-			data, err := json.Marshal(payload)
+			err = n.createDatabaseWithEntries(payload, dir)
 			if err != nil {
-				return fmt.Errorf("failed to marshal JSON: %w", err)
-			}
-			newDatabaseID, err := n.CreateDatabase(data)
-			if err != nil {
-				return fmt.Errorf("failed to create database: %w", err)
-			}
-			log.Printf("Created database with ID: %s", newDatabaseID)
-
-			err = n.AddEntries(newDatabaseID, dir)
-			if err != nil {
-				return fmt.Errorf("failed to add entries: %w", err)
+				return fmt.Errorf("failed to create database with entries: %w", err)
 			}
 
 		} else { //standard block
@@ -343,19 +346,9 @@ func (n *NotionExporter) Export() error {
 				"page_id": n.rootID,
 			}
 
-			data, err := json.Marshal(payload)
+			err = n.createDatabaseWithEntries(payload, dir)
 			if err != nil {
-				return fmt.Errorf("failed to marshal JSON: %w", err)
-			}
-			newDatabaseID, err := n.CreateDatabase(data)
-			if err != nil {
-				return fmt.Errorf("failed to create database: %w", err)
-			}
-			log.Printf("Created database with ID: %s", newDatabaseID)
-
-			err = n.AddEntries(newDatabaseID, dir)
-			if err != nil {
-				return fmt.Errorf("failed to add entries: %w", err)
+				return fmt.Errorf("failed to create database with entries: %w", err)
 			}
 
 		} else {
