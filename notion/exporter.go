@@ -89,8 +89,7 @@ func (n *NotionExporter) Close() error {
 		log.Printf("failed to close exporter %v", err)
 		return fmt.Errorf("failed to export: %w", err)
 	}
-	//return os.RemoveAll(tempDir) // Clean up the temporary directory
-	return nil
+	return os.RemoveAll(tempDir)
 }
 
 func (n *NotionExporter) makeRequest(method, url string, payload []byte) (map[string]any, error) {
@@ -241,7 +240,7 @@ func (n *NotionExporter) exportDatabaseFromFile(pathname, parentType, parentID s
 }
 
 func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo string) error {
-	for _, block := range jsonData { //PATCH each block to the page
+	for _, block := range jsonData {
 		dir := path.Join(pathTo, block["id"].(string))
 
 		if block["type"] == "image" { //TODO: handle images, and other more block types
@@ -274,7 +273,6 @@ func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo s
 			}
 
 			if block["type"] == "toggle" {
-				// If the block is a toggle, we need to add its children as well
 				pathname := path.Join(dir, "blocks.json")
 				f, err := os.Open(pathname)
 				if err != nil {
