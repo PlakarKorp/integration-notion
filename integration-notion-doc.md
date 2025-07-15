@@ -48,9 +48,15 @@ Backed-up content is stored as **JSON files**, including:
 
 ## 🔄 Restoration
 
-> 🧪 Restoration is **not available yet**, but support is planned in a future release.
+To restore your Notion backups, you can use the `restore` command:
+considering you have a Plakar repository at `/path/to/repo` and and have a Notion page with the ID `<root_page_id>` where you want to restore the content:
 
-Stay tuned!
+```bash
+plakar at /path/to/repo restore -to /path/to/restore notion:// token=<ntn_xxx> rootID=<root_page_id> <snapshot_id>
+```
+
+This will restore the backed-up Notion pages to the specified directory, maintaining the original structure.
+/!\ Make sure the `root_page_id` corresponds to a valid Notion page where you have write access. Notion public API does not let you restore directly to a workspace.
 
 ---
 
