@@ -89,7 +89,8 @@ func (n *NotionExporter) Close() error {
 		log.Printf("failed to close exporter %v", err)
 		return fmt.Errorf("failed to export: %w", err)
 	}
-	return os.RemoveAll(tempDir) // Clean up the temporary directory
+	//return os.RemoveAll(tempDir) // Clean up the temporary directory
+	return nil
 }
 
 func (n *NotionExporter) makeRequest(method, url string, payload []byte) (map[string]any, error) {
@@ -243,7 +244,7 @@ func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo s
 	for _, block := range jsonData { //PATCH each block to the page
 		dir := path.Join(pathTo, block["id"].(string))
 
-		if block["type"] == "image" {
+		if block["type"] == "image" { //TODO: handle images, and other more block types
 			continue
 		}
 
@@ -267,9 +268,30 @@ func (n *NotionExporter) addAllBlocks(jsonData []map[string]any, newID, pathTo s
 			if err != nil {
 				return fmt.Errorf("failed to marshal JSON: %w", err)
 			}
-			_, err = n.addBlock(data, newID)
+			newBlockId, err := n.addBlock(data, newID)
 			if err != nil {
 				return fmt.Errorf("failed to patch block: %w", err)
+			}
+
+			if block["type"] == "toggle" {
+				// If the block is a toggle, we need to add its children as well
+				pathname := path.Join(dir, "blocks.json")
+				f, err := os.Open(pathname)
+				if err != nil {
+					return fmt.Errorf("failed to open %s: %w", pathname, err)
+				}
+				defer f.Close()
+
+				var data []map[string]any
+				if err := json.NewDecoder(f).Decode(&data); err != nil {
+					return fmt.Errorf("failed to decode JSON from %s: %w", pathname, err)
+				}
+				if len(data) > 0 {
+					err = n.addAllBlocks(data, newBlockId, path.Dir(pathname))
+					if err != nil {
+						return fmt.Errorf("failed to add toggle children: %w", err)
+					}
+				}
 			}
 		}
 	}
