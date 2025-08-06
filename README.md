@@ -1,96 +1,64 @@
-# 📦 integration-notion
+# Notion Integration
 
-`integration-notion` is a Plakar plugin that lets you back up your Notion pages or workspace directly into a Plakar repository.
+## Overview
 
-> 🔐 All content is fetched via the Notion API and saved as structured JSON files, including both data and metadata.
+**Notion** is a collaborative workspace platform for notes, docs, databases, and project management. This integration allows you to back up and restore Notion pages and workspaces using Plakar.
 
----
+This integration allows:
 
-## ⚙️ Requirements
+- Seamless backup of Notion pages or entire workspaces into a Plakar repository
+- Direct restoration of snapshots to Notion (where permitted by the Notion API)
+- Structured storage of Notion data as JSON, including metadata and block structure
 
-- [**Plakar**](https://github.com/politaire/plakar) installed with plugin support
-- A valid [**Notion API token**](https://www.notion.com/my-integrations) (`ntn_xxx`)
-- The target Notion pages must be **shared** with the integration you created
----
+## Installation
 
-## 📦 Installation
+If a pre-built package exists for your system and architecture,
+you can simply install it using:
 
-First, you need to clone this repository and compile the plugin:
-
-```bash
-git clone git@github.com:PlakarKorp/integration-notion.git
-cd integration-notion
-make
+```sh
+$ plakar pkg add notion
 ```
 
-Then, you need to build the plugin package. This requires Plakar to be installed and available in your `PATH`.
+Otherwise,
+you can first build it:
 
-```bash
-plakar pkg build integration-notion/manifest.yaml
+```sh
+$ plakar pkg build notion
 ```
 
-This command builds the plugin in a .ptar file named `notion-vx.x.x-tag.ptar` (where `x.x.x-tag` is the version number).
-Then, install the plugin:
+This should produce `notion-vX.Y.Z.ptar` that can be installed with:
 
 ```bash
-plakar pkg add notion-vx.x.x-tag.ptar
+$ plakar pkg add ./notion-v0.1.0.ptar
 ```
 
-That’s it — you’re ready to configure and use it.
+## Configuration
 
----
+The configuration parameters are as follow:
 
-## 🚀 Usage
+- `token` (required): Your Notion API integration token (e.g., ntn_xxx)
+- `rootID` (optional for restore): The Notion page ID to restore content to
 
-To back up your Notion pages, run:
+## Examples
 
 ```bash
-plakar source set mynotion notion:// token=<ntn_xxx>
-plakar backup @mynotion
+# configure a Notion source
+$ plakar source add myNotionSrc notion:// token=<ntn_xxx>
+
+# backup the source
+$ plakar at /tmp/store backup @myNotionSrc
+
+# configure a Notion destination (for restore)
+$ plakar destination add myNotionDst notion:// token=<ntn_xxx> rootID=<root_page_id>
+
+# restore the snapshot to the destination
+$ plakar at /tmp/store restore -to @myNotionDst <snapid>
 ```
 
-Replace `<ntn_xxx>` with your actual Notion API token.
+Replace `<ntn_xxx>` with your actual Notion API token and `<root_page_id>` with the target Notion page ID.
 
----
+## Notes
 
-## 📂 Backup Format
-
-Backed-up content is stored as **JSON files**, including:
-- Page content
-- Metadata (title, ID, parent, etc.)
-- Block structure and types
-
----
-
-## 🔄 Restoration
-
-To restore your Notion backups, you can use the `restore` command:
-considering you have a Plakar repository at `/path/to/repo` and and have a Notion page with the ID `<root_page_id>` where you want to restore the content:
-
-```bash
-plakar source set mynotion notion:// token=<ntn_xxx>
-plakar  restore -to @mynotion token=<ntn_xxx> rootID=<root_page_id> <snapshot_id>
-```
-
-Replace `<ntn_xxx>` with your actual Notion API token.
-
-This will restore the backed-up Notion pages to the specified directory, maintaining the original structure.
-/!\ Make sure the `root_page_id` corresponds to a valid Notion page where you have write access. Notion public API does not let you restore directly to a workspace.
-
-Restoring does not handle yet media files (images, videos, etc.) due to api limitations — we are currently working on adding support for media restoration.
-
----
-
-## 🛠️ Tips
-
-- **Sharing:** Make sure your integration is shared with each Notion page you want to back up.
-
-  → Create an [Integration in Notion](https://www.notion.com/my-integrations) and share it with the pages you want to back up.
-
-  → See [Notion’s guide on integrations](https://developers.notion.com/docs/getting-started#step-1-create-an-integration) for how to create and share your token properly.
-- **Security:** Keep your token safe.
-- **Selective backups:** Currently, the plugin pulls all shared pages — filtering support may come later.
-
-## 📬 Feedback
-
-Found a bug? Have a feature request? Open an issue or ping the Plakar team.
+- Make sure your Notion integration is shared with the pages you want to back up or restore.
+- Media files (images, videos, etc.) may not be fully supported due to Notion API limitations.
+- Keep your API token secure.
