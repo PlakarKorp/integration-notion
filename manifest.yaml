@@ -1,6 +1,6 @@
 name: notion
 description: notion backend
-version: v0.1.0-devel
+version: v1.0.0
 connectors:
   - type: importer
     executable: notion-importer
