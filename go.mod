@@ -3,13 +3,13 @@ module github.com/PlakarKorp/notion-integration
 go 1.24.0
 
 require (
-	github.com/PlakarKorp/go-kloset-sdk v1.0.6-0.20260126085214-e96d6b2f007a
-	github.com/PlakarKorp/kloset v1.1.0-beta.1.0.20260131115717-b322ff770754
+	github.com/PlakarKorp/go-kloset-sdk v1.1.0-beta.1
+	github.com/PlakarKorp/kloset v1.1.0-beta.1
 	golang.org/x/sync v0.19.0
 )
 
 require (
-	github.com/PlakarKorp/integration-grpc/v2 v2.0.0-20260126160414-cddadf0e8bf5 // indirect
+	github.com/PlakarKorp/integration-grpc v1.1.0-beta.3 // indirect
 	github.com/cockroachdb/crlib v0.0.0-20250718215705-7ff5051265b9 // indirect
 	github.com/cockroachdb/errors v1.12.0 // indirect
 	github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb // indirect
@@ -33,7 +33,7 @@ require (
 	golang.org/x/net v0.49.0 // indirect
 	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260202165425-ce8ad4cf556b // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260203192932-546029d2fa20 // indirect
 	google.golang.org/grpc v1.78.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
